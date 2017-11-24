@@ -5,14 +5,15 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_msgs/PointIndices.h>
 #include <pcl_ros/pcl_nodelet.h>
+#include <geometry_msgs/PoseStamped.h>
 
 LSDSLAMToPCL::LSDSLAMToPCL(ros::NodeHandle& nh, std::string& name) :
     nh_(nh),
     node_name_(name),
-    sparsify_factor_(0),
-    min_near_support_(5),
-    scaled_depth_var_thresh_(1),
-    abs_depth_var_thresh_(1)
+    sparsify_factor_(1),
+    min_near_support_(7),
+    scaled_depth_var_thresh_(0.001),
+    abs_depth_var_thresh_(0.1)
 {}
 
 LSDSLAMToPCL::~LSDSLAMToPCL() {}
@@ -22,28 +23,34 @@ bool LSDSLAMToPCL::Init()
     depth_subscriber_ = nh_.subscribe("input", 10, &LSDSLAMToPCL::depthCB, this);
     cloud_publisher_ = nh_.advertise<pcl::PointCloud<pcl::PointXYZRGB> >("output_points", 10);
     indices_publisher_ = nh_.advertise<pcl_ros::PCLNodelet::PointIndices>("output_indices", 10);
+    pose_publisher_ = nh_.advertise<geometry_msgs::PoseStamped>("cam_pose",10);
 
     point_invalid_.x = std::numeric_limits<float>::quiet_NaN();
     point_invalid_.y = std::numeric_limits<float>::quiet_NaN();
     point_invalid_.z = std::numeric_limits<float>::quiet_NaN();
     point_invalid_.data[3] = 1.0f;
+
+
+    ROS_INFO_STREAM_ONCE("LSD-SLAM to PCL Init finished");
     return true;
 }
 
 void LSDSLAMToPCL::depthCB(const lsd_slam_to_pcl::keyframeMsgConstPtr msg)
 {
+    ROS_INFO_STREAM_ONCE("LSD-SLAM to PCL depthCB start");
+    ROS_INFO_STREAM_ONCE("sparsify_factor:" << sparsify_factor_ << "min_near_support_" << min_near_support_ << "scaled_" <<scaled_depth_var_thresh_<<"abs_"<<abs_depth_var_thresh_);
     if (msg->isKeyframe)
     {
 
         pcl::PointCloud<pcl::PointXYZRGB> cloud_pcl;
         pcl_ros::PCLNodelet::PointIndices indices_ros;
-
-        const float fxi = 1 / msg->fx;
-        const float fyi = 1 / msg->fy;
-        const float cxi = -msg->cx / msg->fx;
-        const float cyi = -msg->cy / msg->fy;
-
-        const int width = msg->width;
+        
+        const float fxi  = 1 / msg->fx;
+        const float fyi  = 1 / msg->fy;
+        const float cxi  = -msg->cx / msg->fx;
+        const float cyi  = -msg->cy / msg->fy;
+        
+        const int width  = msg->width;
         const int height = msg->height;
 
         int num_pts_total = 0;
@@ -54,6 +61,23 @@ void LSDSLAMToPCL::depthCB(const lsd_slam_to_pcl::keyframeMsgConstPtr msg)
 
         memcpy(cam_to_world.data(), msg->camToWorld.data(), 7 * sizeof(float));
         memcpy(input_points.get(), msg->pointcloud.data(), width * height * sizeof(InputPointDense));
+
+        Sophus::Quaternionf quat = cam_to_world.quaternion().cast<float>();
+        Eigen::Vector3f trans = cam_to_world.translation().cast<float>();
+        float length = quat.norm();
+        geometry_msgs::PoseStamped pose;
+        
+        pose.header.frame_id = "/frame";
+        pose.header.stamp = ros::Time::now();
+        
+        pose.pose.position.x = trans[0];
+        pose.pose.position.y = trans[1];
+        pose.pose.position.z = trans[2];
+        ROS_INFO_STREAM("xyzw:" << quat.x()<<","<<quat.y()<<","<<quat.z()<< "," <<quat.w());
+        pose.pose.orientation.x = quat.x()/length;
+        pose.pose.orientation.y = quat.y()/length;
+        pose.pose.orientation.z = quat.z()/length;
+        pose.pose.orientation.w = quat.w()/length;
 
         const float cam_to_world_scale = cam_to_world.scale();
 
@@ -143,23 +167,27 @@ void LSDSLAMToPCL::depthCB(const lsd_slam_to_pcl::keyframeMsgConstPtr msg)
             }
         }
 
-        uint64_t time_stamp = ros::Time::now().toNSec();
+        // uint64_t time_stamp = ros::Time::now().toNSec();
 
         cloud_pcl.width = width;
         cloud_pcl.height = height;
         cloud_pcl.is_dense = false;
-        indices_ros.header.stamp = pcl_conversions::fromPCL(time_stamp);
+        // indices_ros.header.stamp = pcl_conversions::fromPCL(time_stamp);
+        cloud_pcl.header.frame_id = "frame";
+        pcl_conversions::toPCL(ros::Time::now(), cloud_pcl.header.stamp);
+        indices_ros.header.stamp = ros::Time::now();
 
         cloud_publisher_.publish(boost::make_shared<const pcl::PointCloud<pcl::PointXYZRGB> >(cloud_pcl));
         indices_publisher_.publish(boost::make_shared<const pcl_ros::PCLNodelet::PointIndices>(indices_ros));
+        pose_publisher_.publish(pose);
 
-        ROS_DEBUG_STREAM("Published " << num_pts_total << " points to pointcloud, dimensions [" << cloud_pcl.width << " " << cloud_pcl.height << "]");
+        ROS_INFO_STREAM("Published " << num_pts_total << " points to pointcloud, dimensions [" << cloud_pcl.width << " " << cloud_pcl.height << "]");
 
     }
 
     else
     {
-        ROS_DEBUG_STREAM("Error, must subscribe to keyframe");
+        ROS_INFO_STREAM("Error, must subscribe to keyframe");
     }
 
 }

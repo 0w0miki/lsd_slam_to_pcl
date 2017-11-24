@@ -1,0 +1,30 @@
+<launch>
+	<node pkg="nodelet" type="nodelet" name="nodelet_manager"  args="manager" />
+	<!-- LSD SLAM -> PCL pointcloud converstion -->
+	<node pkg="nodelet" type="nodelet" name="lsd_slam_to_pcl" args="load LSDSLAMToPCLNodelet nodelet_manager" output="screen">
+	     <remap from="~input" to="/lsd_slam/keyframes"/>
+	</node>
+	<node pkg="octomap_server" type="octomap_server_node" name="octomap_server">
+    	<!-- resolution in meters per pixel -->
+    	<param name="resolution" value="0.05" />
+    	<!-- name of the fixed frame, needs to be "/map" for SLAM -->
+    	<param name="frame_id" type="string" value="/frame" />
+    	<!-- max range / depth resolution of the kinect in meter -->
+    	<param name="sensor_model/max_range" value="10.0" />
+    	<param name="latch" value="true" />
+    	<!-- max/min height for occupancy map, should be in meters -->
+    	<param name="pointcloud_max_z" value="10" />
+    	<param name="pointcloud_min_z" value="-10" />
+    	<!-- topic from where pointcloud2 messages are subscribed -->
+    	<remap from="cloud_in" to="/lsd_slam_to_pcl/output_points" />
+  	</node>
+	<node name="plan" pkg="my_pcl_tutorial" type="example" launch-prefix="xterm -e">
+		<remap from="input" to="/octomap_point_cloud_centers"/>
+		<remap from="pose" to="lsd_slam_to_pcl/cam_pose"/>
+		<remap from="cmd_vel" to="RosAria/cmd_vel"/>
+		<param name="scale_linear" value="0.1"/>
+		<param name="scale_angular" value="0.1"/>
+		<param name="dist_thresh" value="0.5"/>
+	</node>
+  	<node name="rviz" pkg="rviz" type="rviz" args="-d $(find lsd_slam_to_pcl)/rviz/setting.rviz"/>
+</launch>

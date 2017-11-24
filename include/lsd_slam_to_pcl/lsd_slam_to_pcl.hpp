@@ -27,6 +27,7 @@ private:
     ros::Subscriber depth_subscriber_;
     ros::Publisher cloud_publisher_;
     ros::Publisher indices_publisher_;
+    ros::Publisher pose_publisher_;
 
     pcl::PointXYZRGB point_invalid_;
     std::string node_name_;
